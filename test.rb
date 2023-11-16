@@ -10,7 +10,7 @@ ws = session.spreadsheet_by_key('1q2ZdYCwVr50Nue8s0oq0kAMsx8AZfSATgDkgRs5V11M')
 class Tabela 
     include Enumerable
     @@brojac = 0
-    attr_accessor :sheets, :tabela, :kolone, :indeks, :prvired, :prvakolona, :brredova, :brkolona, :worksheet
+    
     def initialize(worksheet)
       @worksheet = worksheet.worksheets[@@brojac]
       @@brojac +=1
@@ -23,6 +23,7 @@ class Tabela
       @brredova 
       @brkolona 
     end
+    attr_accessor :sheets, :tabela, :kolone, :indeks, :prvired, :prvakolona, :brredova, :brkolona, :worksheet
 
     def each
       if block_given?
@@ -55,22 +56,46 @@ class Tabela
       end
     end
 
+    def imeKolone(ime)
+      if(!!(ime=~ /\s/))
+        reci = ime.split(' ') 
+        reci.each do |rec| 
+          rec.downcase!  
+        end
+        konacnoime = reci.join('')
+        return konacnoime
+      end
+      return ime
+    end
+
+    def uzmiIndekse
+      (0..@brkolona-1).each do |kol|
+          ime = imeKolone(@kolone[kol])
+          @indeks[ime] = Kolona.new(self, kolonaSadrzaj(kol))
+      end
+    end
+
     def popuniTabelu
       (@prvired+1..@brredova+@prvired-1).each do |red| 
         niz = []
-        (@prvakolona..@brkolona+@prvakolona).each do |kolona|
+        b = true
+        (@prvakolona..@brkolona+@prvakolona-1).each do |kolona|
           celija = @worksheet[red, kolona]
-          if celija != ''
-            niz.append(celija)
-          end
-          if celija == '' || celija == 'subtotal' || celija == 'total'
-            if celija == ''
-              @prazni_redovi.append(red)
-            end
+          if celija == 'subtotal' || celija == 'total'
             break
+            b=false
           end
+          niz.append(celija)
+          # if celija == '' || celija == 'subtotal' || celija == 'total'
+          #   if celija == ''
+          #     @prazni_redovi.append(red)
+          #   end
+          #   break
+          # end
         end
-        @tabela.append(niz)
+        if(b==true)
+          @tabela.append(niz)
+        end
       end
     end
 
@@ -78,32 +103,18 @@ class Tabela
       @tabela[broj-1]
     end
 
-    def [](vrednost)
-      niz = []
-      @tabela.each do |red|
-        (0..red.size-1).each do |kol|
-          if @kolone[kol] == vrednost
-            niz.append(red[kol])
-          end
-        end
-      end
-      return niz
+    def kolonaSadrzaj(broj)
+      @tabela.transpose[broj]
     end
 
-    def[]=(kljuc, indeks, vrednost)
-      puts indeks
-      puts vrednost
-      if @kolone.include?(kljuc) 
-        kolona = @kolone.index(kljuc) 
-        @tabela[indeks][kolona] = vrednost
-      elsif indeks.is_a?(Integer) && indeks >= 0 && indeks < @tabela.length 
-        @tabela[indeks] = vrednost
-      end
-     
+    def [](vrednost)
+      #indeks[imeKolone(vrednost)].kolona
+      indeks[imeKolone(vrednost)]
     end
     
     def method_missing(symbol, *args)
-      # mozemo da se oslonimo na gornju metodu [] i da je pozovemo nad self sa symbol kao argumentom
+      p symbol
+      self[symbol]
     end
 
     def +(tabela2)
@@ -150,21 +161,94 @@ class Tabela
 
 end
 
+class Kolona
+
+  def initialize(tabela,kolona) 
+    @mojaTabela = tabela
+    @kolona = kolona
+  end
+
+  attr_accessor :mojaTabela, :kolona
+
+  def nizBrojeva(kolona)
+    niz = []
+    (0..kolona.size-1).each do |i|
+      niz.append(kolona[i].to_i)
+    end
+    return niz
+  end
+
+  def sum(init = nil)
+    return nizBrojeva(@kolona).sum
+  end
+
+  def method_missing(symbol, *args, &block)
+    p "uslo"
+    case symbol.to_s.downcase
+    when 'reduce'
+      brojevi = nizBrojeva(@kolona)
+      brojevi.reduce(args[1].to_sym)
+    when 'select'
+      brojevi = nizBrojeva(@kolona)
+      brojevi.select(&block)
+    when 'map'
+      brojevi = nizBrojeva(@kolona)
+      brojevi.map(&block)
+    when 'avg'
+      brojevi = nizBrojeva(@kolona)
+      1.0 * brojevi.sum / brojevi.size
+    else
+      vrednost = symbol
+      indeks = promeniKolonuUTabeli(vrednost) 
+      @mojaTabela.tabela[indeks] if indeks
+    end
+  end
+  
+  def pronadjiIneksReda(vrednost)
+    (0..@kolona.size-1).each do |i|
+      return i if @kolona[i] == vrednost
+    end
+  end
+
+  def indeks
+    @mojaTabela.indeks.each_with_index do |(key, value), index|
+      return index if value == self
+    end
+  end
+
+  def [](vrednost)
+    @mojaTabela.tabela[vrednost][self.indeks]
+  end
+
+  def[]=(indeks,vrednost)
+    @mojaTabela.tabela[indeks][self.indeks] = vrednost
+    @mojaTabela.worksheet.save
+    @mojaTabela.worksheet.reload
+  end
+
+
+end
+
+
 t = Tabela.new(ws)
 
 t.pravljenjeTabele
 t.heder
 t.popuniTabelu
-#puts t.tabela
+t.uzmiIndekse
 # t.each do |celija|
 #   puts celija
 # end
-#puts t.row(1)[1]
-# p t["PrvaKolona"]
-# t["PrvaKolona"][2]=1
-t2 = Tabela.new(ws)
-t2.pravljenjeTabele
-t2.heder
-t2.popuniTabelu
-p t+t2
-p t-t2
+# puts t.row(1)[1]
+p t["PrvaKolona"]
+p t["PrvaKolona"][2]
+p t["PrvaKolona"][2] = "1"
+p t.tabela
+
+# t2 = Tabela.new(ws)
+# t2.pravljenjeTabele
+# t2.heder
+# t2.popuniTabelu
+# p t+t2
+# p t-t2
+
